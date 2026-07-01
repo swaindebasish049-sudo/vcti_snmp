@@ -1,0 +1,15 @@
+# Build output
+out/
+target/
+*.class
+
+# Archives / local-only
+ems.zip
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Claude Code local settings
+.claude/

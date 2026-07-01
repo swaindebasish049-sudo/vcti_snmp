@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EMS &middot; SNMP Lab</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --border: #e3e6ea;
+    --text: #1f2430; --muted: #6b7280; --accent: #0d6efd;
+    --green: #16a34a; --red: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { background: var(--card); border-bottom: 1px solid var(--border);
+           padding: 16px 28px; display: flex; align-items: baseline; gap: 14px; }
+  header h1 { margin: 0; font-size: 20px; }
+  header span { color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: 380px 1fr; gap: 20px;
+         padding: 20px 28px; max-width: 1300px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+  .panel-title { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+                 color: var(--muted); margin: 0 0 10px; }
+  .device { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+            padding: 14px 16px; margin-bottom: 12px; cursor: pointer; }
+  .device:hover { border-color: var(--accent); }
+  .device.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(13,110,253,.15); }
+  .device .name { font-weight: 600; }
+  .device .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .pill { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px;
+          background: #eef2ff; color: #4338ca; margin-left: 6px; }
+
+  .workbench { background: var(--card); border: 1px solid var(--border);
+               border-radius: 10px; padding: 18px 20px; min-height: 480px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  button { font: inherit; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+           border: 1px solid var(--border); background: #fff; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=text] { font: inherit; padding: 7px 10px; border: 1px solid var(--border);
+                     border-radius: 8px; min-width: 240px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  td.oid { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--muted); }
+  .badge-up   { color: var(--green); font-weight: 600; }
+  .badge-down { color: var(--red);   font-weight: 600; }
+  .status { font-size: 13px; color: var(--muted); margin: 8px 0; min-height: 18px; }
+  .error { color: var(--red); }
+  .hint { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>EMS &middot; SNMP Lab</h1>
+  <span>simulated Cisco devices served by snmpsim &mdash; pick a device, then query it</span>
+</header>
+
+<main>
+  <section>
+    <p class="panel-title">Devices</p>
+    <div id="deviceList"><p class="hint">Loading devices&hellip;</p></div>
+  </section>
+
+  <section>
+    <p class="panel-title">Workbench</p>
+    <div class="workbench">
+      <div id="noDevice" class="hint">Select a device on the left to start querying.</div>
+      <div id="tools" style="display:none">
+        <div class="toolbar">
+          <button class="primary" onclick="systemInfo()">System Info</button>
+          <button class="primary" onclick="interfaces()">Interfaces</button>
+          <input type="text" id="oidInput" placeholder="Custom OID e.g. 1.3.6.1.2.1.1.1.0">
+          <button onclick="customGet()">GET</button>
+          <button onclick="customWalk()">WALK</button>
+        </div>
+        <div class="status" id="status"></div>
+        <div id="output"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const OIDS = {
+  sysDescr:  "1.3.6.1.2.1.1.1.0", sysUpTime:  "1.3.6.1.2.1.1.3.0",
+  sysContact:"1.3.6.1.2.1.1.4.0", sysName:    "1.3.6.1.2.1.1.5.0",
+  sysLocation:"1.3.6.1.2.1.1.6.0",
+  ifDescr: "1.3.6.1.2.1.2.2.1.2", ifOperStatus: "1.3.6.1.2.1.2.2.1.8",
+  ifSpeed: "1.3.6.1.2.1.2.2.1.5"
+};
+let selected = null;
+
+async function api(path) {
+  const res = await fetch(path);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.message || res.statusText);
+  return body;
+}
+
+async function loadDevices() {
+  const list = document.getElementById("deviceList");
+  try {
+    const devices = await api("/devices");
+    list.innerHTML = "";
+    devices.forEach(d => {
+      const el = document.createElement("div");
+      el.className = "device"; el.id = "dev-" + d.id;
+      el.innerHTML = `<div class="name">${d.name}<span class="pill">${d.version}</span></div>
+                      <div class="meta">${d.id} &middot; ${d.host}:${d.port} &middot; ${d.location ?? ""}</div>`;
+      el.onclick = () => select(d);
+      list.appendChild(el);
+    });
+    if (!devices.length) list.innerHTML = '<p class="hint">No devices registered yet.</p>';
+  } catch (e) {
+    list.innerHTML = `<p class="error">Failed to load devices: ${e.message}</p>`;
+  }
+}
+
+function select(d) {
+  selected = d;
+  document.querySelectorAll(".device").forEach(el => el.classList.remove("active"));
+  document.getElementById("dev-" + d.id).classList.add("active");
+  document.getElementById("noDevice").style.display = "none";
+  document.getElementById("tools").style.display = "block";
+  setStatus(`Selected <b>${d.name}</b> — community-mapped recording on snmpsim`);
+  document.getElementById("output").innerHTML = "";
+}
+
+function setStatus(html, isError) {
+  const s = document.getElementById("status");
+  s.innerHTML = html; s.className = "status" + (isError ? " error" : "");
+}
+
+function renderRows(title, rows) {
+  document.getElementById("output").innerHTML =
+    `<h3 style="margin:6px 0 10px;font-size:15px">${title}</h3>
+     <table><tr><th style="width:40%">${rows.header[0]}</th><th>${rows.header[1]}</th></tr>
+     ${rows.data.map(r => `<tr><td class="${rows.oidCol ? 'oid' : ''}">${r[0]}</td><td>${r[1]}</td></tr>`).join("")}
+     </table>`;
+}
+
+async function systemInfo() {
+  if (!selected) return;
+  setStatus("Fetching system group (multi-OID GET)&hellip;");
+  try {
+    const q = Object.values(OIDS).slice(0, 5).map(o => "oid=" + o).join("&");
+    const res = await api(`/devices/${selected.id}/get-multi?${q}`);
+    const names = Object.keys(OIDS).slice(0, 5);
+    renderRows("System Info — " + selected.name, {
+      header: ["Object", "Value"],
+      data: res.map((r, i) => [names[i] ?? r.oid, r.value])
+    });
+    setStatus(`OK — ${res.length} values via one GET request`);
+  } catch (e) { setStatus("Error: " + e.message, true); }
+}
+
+async function interfaces() {
+  if (!selected) return;
+  setStatus("Walking ifDescr + ifOperStatus (GETBULK)&hellip;");
+  try {
+    const [descr, oper] = await Promise.all([
+      api(`/devices/${selected.id}/walk?oid=${OIDS.ifDescr}`),
+      api(`/devices/${selected.id}/walk?oid=${OIDS.ifOperStatus}`)
+    ]);
+    const status = {};
+    oper.forEach(r => status[r.oid.split(".").pop()] = r.value);
+    renderRows("Interfaces — " + selected.name, {
+      header: ["Interface", "Oper Status"],
+      data: descr.map(r => {
+        const idx = r.oid.split(".").pop();
+        const up = status[idx] === "1";
+        return [r.value, `<span class="${up ? 'badge-up' : 'badge-down'}">${up ? "up" : "down"}</span>`];
+      })
+    });
+    setStatus(`OK — ${descr.length} interfaces (2 walks)`);
+  } catch (e) { setStatus("Error: " + e.message, true); }
+}
+
+async function customGet() {
+  const oid = document.getElementById("oidInput").value.trim();
+  if (!selected || !oid) return;
+  setStatus("GET " + oid + "&hellip;");
+  try {
+    const r = await api(`/devices/${selected.id}/get?oid=${encodeURIComponent(oid)}`);
+    renderRows("GET result", { header: ["OID", "Value"], oidCol: true, data: [[r.oid, r.value]] });
+    setStatus("OK");
+  } catch (e) { setStatus("Error: " + e.message, true); }
+}
+
+async function customWalk() {
+  const oid = document.getElementById("oidInput").value.trim();
+  if (!selected || !oid) return;
+  setStatus("WALK " + oid + "&hellip;");
+  try {
+    const res = await api(`/devices/${selected.id}/walk?oid=${encodeURIComponent(oid)}`);
+    renderRows(`WALK — ${res.length} results`, {
+      header: ["OID", "Value"], oidCol: true, data: res.map(r => [r.oid, r.value])
+    });
+    setStatus(`OK — ${res.length} rows`);
+  } catch (e) { setStatus("Error: " + e.message, true); }
+}
+
+loadDevices();
+</script>
+</body>
+</html>
