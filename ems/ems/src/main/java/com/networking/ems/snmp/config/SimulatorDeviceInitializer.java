@@ -37,11 +37,21 @@ public class SimulatorDeviceInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        // -- hand-authored recordings (synthetic but Cisco-realistic) --
         register("cisco-2621",  "Cisco 2621 Edge Router",     "cisco-2621-router",  "Cisco", "EMS Lab - Rack 1");
         register("cisco-3640",  "Cisco 3640 Core Router",     "cisco-3640-router",  "Cisco", "EMS Lab - Rack 1");
         register("cisco-7204",  "Cisco 7204 Backbone Router", "cisco-7204-router",  "Cisco", "EMS Lab - Rack 2");
         register("cisco-c6506", "Cisco Catalyst 6506 Switch", "cisco-c6506-switch", "Cisco", "EMS Lab - DC Row A");
-        register("cisco-3750",  "Cisco Catalyst 3750 Switch (recorded)", "cisco_16_switch", "Cisco", "snmpsim sample");
+
+        // -- REAL device captures (snmpsim sample + LibreNMS test data) --
+        register("cisco-3750",     "Cisco Catalyst 3750 (real capture)",    "cisco_16_switch",      "Cisco",   "recorded device");
+        register("cisco-c6500",    "Cisco Catalyst 6500 (real capture)",    "real-cisco-c6500",     "Cisco",   "recorded device");
+        register("cisco-2960x",    "Cisco Catalyst 2960X (real capture)",   "real-cisco-2960x",     "Cisco",   "recorded device");
+        register("cisco-asr1000",  "Cisco ASR1000 IOS-XE (real capture)",   "real-cisco-c9400",     "Cisco",   "recorded device");
+        register("cisco-nexus3064","Cisco Nexus 3064PQ NX-OS (real capture)","real-cisco-nexus3064","Cisco",   "recorded device");
+        register("juniper-mx80",   "Juniper MX80 Router (real capture)",    "real-juniper-mx",      "Juniper", "recorded device");
+        register("arista-7280r",   "Arista 7280SR Switch (real capture)",   "real-arista-7280r",    "Arista",  "recorded device");
+        register("huawei-s5720",   "Huawei S5720 Switch (real capture)",    "real-huawei-s5720",    "Huawei",  "recorded device");
         log.info("Registered {} simulator devices (snmpsim @ {}:{})",
                 registry.list().size(), SNMPSIM_HOST, SNMPSIM_PORT);
     }

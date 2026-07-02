@@ -93,6 +93,13 @@ const OIDS = {
 };
 let selected = null;
 
+/* SNMP values are untrusted text; escape them so strings like "<private>"
+   render literally instead of being parsed as HTML. */
+function esc(s) {
+  return String(s).replace(/[&<>"']/g,
+      c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 async function api(path) {
   const res = await fetch(path);
   const body = await res.json();
@@ -108,8 +115,8 @@ async function loadDevices() {
     devices.forEach(d => {
       const el = document.createElement("div");
       el.className = "device"; el.id = "dev-" + d.id;
-      el.innerHTML = `<div class="name">${d.name}<span class="pill">${d.version}</span></div>
-                      <div class="meta">${d.id} &middot; ${d.host}:${d.port} &middot; ${d.location ?? ""}</div>`;
+      el.innerHTML = `<div class="name">${esc(d.name)}<span class="pill">${esc(d.version)}</span></div>
+                      <div class="meta">${esc(d.id)} &middot; ${esc(d.host)}:${esc(d.port)} &middot; ${esc(d.location ?? "")}</div>`;
       el.onclick = () => select(d);
       list.appendChild(el);
     });
@@ -125,7 +132,7 @@ function select(d) {
   document.getElementById("dev-" + d.id).classList.add("active");
   document.getElementById("noDevice").style.display = "none";
   document.getElementById("tools").style.display = "block";
-  setStatus(`Selected <b>${d.name}</b> — community-mapped recording on snmpsim`);
+  setStatus(`Selected <b>${esc(d.name)}</b> — community-mapped recording on snmpsim`);
   document.getElementById("output").innerHTML = "";
 }
 
@@ -149,9 +156,9 @@ async function systemInfo() {
     const q = Object.values(OIDS).slice(0, 5).map(o => "oid=" + o).join("&");
     const res = await api(`/devices/${selected.id}/get-multi?${q}`);
     const names = Object.keys(OIDS).slice(0, 5);
-    renderRows("System Info — " + selected.name, {
+    renderRows("System Info — " + esc(selected.name), {
       header: ["Object", "Value"],
-      data: res.map((r, i) => [names[i] ?? r.oid, r.value])
+      data: res.map((r, i) => [names[i] ?? r.oid, esc(r.value)])
     });
     setStatus(`OK — ${res.length} values via one GET request`);
   } catch (e) { setStatus("Error: " + e.message, true); }
@@ -167,12 +174,12 @@ async function interfaces() {
     ]);
     const status = {};
     oper.forEach(r => status[r.oid.split(".").pop()] = r.value);
-    renderRows("Interfaces — " + selected.name, {
+    renderRows("Interfaces — " + esc(selected.name), {
       header: ["Interface", "Oper Status"],
       data: descr.map(r => {
         const idx = r.oid.split(".").pop();
         const up = status[idx] === "1";
-        return [r.value, `<span class="${up ? 'badge-up' : 'badge-down'}">${up ? "up" : "down"}</span>`];
+        return [esc(r.value), `<span class="${up ? 'badge-up' : 'badge-down'}">${up ? "up" : "down"}</span>`];
       })
     });
     setStatus(`OK — ${descr.length} interfaces (2 walks)`);
@@ -185,7 +192,7 @@ async function customGet() {
   setStatus("GET " + oid + "&hellip;");
   try {
     const r = await api(`/devices/${selected.id}/get?oid=${encodeURIComponent(oid)}`);
-    renderRows("GET result", { header: ["OID", "Value"], oidCol: true, data: [[r.oid, r.value]] });
+    renderRows("GET result", { header: ["OID", "Value"], oidCol: true, data: [[r.oid, esc(r.value)]] });
     setStatus("OK");
   } catch (e) { setStatus("Error: " + e.message, true); }
 }
@@ -197,7 +204,7 @@ async function customWalk() {
   try {
     const res = await api(`/devices/${selected.id}/walk?oid=${encodeURIComponent(oid)}`);
     renderRows(`WALK — ${res.length} results`, {
-      header: ["OID", "Value"], oidCol: true, data: res.map(r => [r.oid, r.value])
+      header: ["OID", "Value"], oidCol: true, data: res.map(r => [r.oid, esc(r.value)])
     });
     setStatus(`OK — ${res.length} rows`);
   } catch (e) { setStatus("Error: " + e.message, true); }
