@@ -20,7 +20,8 @@ public record DeviceResponse(
         boolean credentialConfigured
 ) {
     public static DeviceResponse from(ManagedDevice d) {
-        boolean hasCred = d.community() != null && !d.community().isBlank();
+        boolean hasCred = (d.community() != null && !d.community().isBlank())
+                || (d.v3() != null && d.v3().username() != null);
         return new DeviceResponse(
                 d.id(), d.name(), d.host(), d.port(), d.version(),
                 d.vendor(), d.location(), hasCred);

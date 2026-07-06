@@ -56,7 +56,7 @@ public class DeviceRegistrationController {
 
         ManagedDevice device = new ManagedDevice(
                 req.id(), req.name(), req.host(), port, version,
-                req.community(), req.vendor(), req.location());
+                req.community(), req.v3(), req.vendor(), req.location());
 
         registry.register(device);
         return DeviceResponse.from(device);

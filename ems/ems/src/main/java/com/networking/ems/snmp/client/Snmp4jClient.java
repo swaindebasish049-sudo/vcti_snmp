@@ -3,13 +3,23 @@ package com.networking.ems.snmp.client;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.snmp4j.CommunityTarget;
 import org.snmp4j.PDU;
+import org.snmp4j.ScopedPDU;
 import org.snmp4j.Snmp;
 import org.snmp4j.Target;
+import org.snmp4j.UserTarget;
 import org.snmp4j.event.ResponseEvent;
 import org.snmp4j.mp.SnmpConstants;
+import org.snmp4j.security.AuthMD5;
+import org.snmp4j.security.AuthSHA;
+import org.snmp4j.security.PrivAES128;
+import org.snmp4j.security.PrivDES;
+import org.snmp4j.security.SecurityLevel;
+import org.snmp4j.security.UsmUser;
 import org.snmp4j.smi.GenericAddress;
 import org.snmp4j.smi.OID;
 import org.snmp4j.smi.OctetString;
@@ -20,22 +30,32 @@ import com.networking.ems.snmp.exception.SnmpException;
 import com.networking.ems.snmp.exception.SnmpTimeoutException;
 import com.networking.ems.snmp.model.SnmpDevice;
 import com.networking.ems.snmp.model.SnmpResult;
+import com.networking.ems.snmp.model.SnmpV3Credentials;
 
 /**
- * SNMP4J-backed implementation of all v1/v2c operations.
+ * SNMP4J-backed implementation of all operations for SNMP v1, v2c and v3.
  * This is the ONLY class that imports SNMP4J.
  *
- * Reuses the single shared {@link Snmp} session (from SnmpSessionConfig).
+ * Version differences handled here:
+ *  - v1/v2c: CommunityTarget + plain PDU. The community string is the credential.
+ *  - v3:     UserTarget + ScopedPDU. Credentials are a USM user (auth+priv);
+ *            the ScopedPDU carries an optional context name (snmpsim uses the
+ *            context to select the recording, like the community does in v2c).
+ *  - WALK:   v1 has no GETBULK, so it walks with a GETNEXT loop;
+ *            v2c and v3 both use GETBULK.
  */
 @Component
 public class Snmp4jClient implements SnmpClient {
 
     /** Safety cap so a misbehaving agent can't make a WALK run forever. */
     private static final int MAX_WALK_RESULTS = 10_000;
-    /** How many rows to request per GETBULK round-trip (v2c). */
+    /** How many rows to request per GETBULK round-trip (v2c/v3). */
     private static final int BULK_MAX_REPETITIONS = 25;
 
     private final Snmp snmp;
+
+    /** Tracks which v3 users were already added to the shared USM. */
+    private final Set<String> registeredV3Users = ConcurrentHashMap.newKeySet();
 
     public Snmp4jClient(Snmp snmp) {
         this.snmp = snmp;
@@ -47,7 +67,7 @@ public class Snmp4jClient implements SnmpClient {
 
     @Override
     public SnmpResult get(SnmpDevice device, String oid) {
-        PDU request = new PDU();
+        PDU request = createPdu(device);
         request.add(new VariableBinding(new OID(oid)));
         request.setType(PDU.GET);
 
@@ -61,7 +81,7 @@ public class Snmp4jClient implements SnmpClient {
 
     @Override
     public List<SnmpResult> get(SnmpDevice device, List<String> oids) {
-        PDU request = new PDU();
+        PDU request = createPdu(device);
         for (String oid : oids) {
             request.add(new VariableBinding(new OID(oid)));
         }
@@ -83,7 +103,7 @@ public class Snmp4jClient implements SnmpClient {
 
     @Override
     public SnmpResult getNext(SnmpDevice device, String oid) {
-        PDU request = new PDU();
+        PDU request = createPdu(device);
         request.add(new VariableBinding(new OID(oid)));
         request.setType(PDU.GETNEXT);
 
@@ -98,27 +118,25 @@ public class Snmp4jClient implements SnmpClient {
     }
 
     // =========================================================================
-    // WALK -- the version-dependent one
+    // WALK -- version-dependent
     // =========================================================================
 
     @Override
     public List<SnmpResult> walk(SnmpDevice device, String baseOid) {
         return switch (device.version()) {
-            case V1  -> walkWithGetNext(device, baseOid); // v1 has no GETBULK
-            case V2C -> walkWithGetBulk(device, baseOid);
-            case V3  -> throw new SnmpException(
-                    "SNMPv3 is not supported yet; register the device as V1 or V2C");
+            case V1       -> walkWithGetNext(device, baseOid); // v1 has no GETBULK
+            case V2C, V3  -> walkWithGetBulk(device, baseOid);
         };
     }
 
-    /** v1 (and a valid fallback for v2c): repeated GETNEXT until we leave the subtree. */
+    /** v1: repeated GETNEXT until we leave the subtree. */
     private List<SnmpResult> walkWithGetNext(SnmpDevice device, String baseOid) {
         List<SnmpResult> results = new ArrayList<>();
         OID base = new OID(baseOid);
         OID current = base;
 
         while (results.size() < MAX_WALK_RESULTS) {
-            PDU request = new PDU();
+            PDU request = createPdu(device);
             request.add(new VariableBinding(current));
             request.setType(PDU.GETNEXT);
 
@@ -132,7 +150,7 @@ public class Snmp4jClient implements SnmpClient {
 
             VariableBinding vb = response.get(0);
             if (vb == null || vb.isException()) {
-                break; // v2c endOfMibView etc.
+                break;
             }
             OID next = vb.getOid();
             if (!isInSubtree(base, next)) {
@@ -144,7 +162,7 @@ public class Snmp4jClient implements SnmpClient {
         return results;
     }
 
-    /** v2c: GETBULK pulls many rows per round-trip -- far fewer packets. */
+    /** v2c/v3: GETBULK pulls many rows per round-trip -- far fewer packets. */
     private List<SnmpResult> walkWithGetBulk(SnmpDevice device, String baseOid) {
         List<SnmpResult> results = new ArrayList<>();
         OID base = new OID(baseOid);
@@ -152,7 +170,7 @@ public class Snmp4jClient implements SnmpClient {
         boolean done = false;
 
         while (!done && results.size() < MAX_WALK_RESULTS) {
-            PDU request = new PDU();
+            PDU request = createPdu(device);
             request.setType(PDU.GETBULK);
             request.setNonRepeaters(0);
             request.setMaxRepetitions(BULK_MAX_REPETITIONS);
@@ -186,7 +204,7 @@ public class Snmp4jClient implements SnmpClient {
 
     @Override
     public SnmpResult set(SnmpDevice device, String oid, String value) {
-        PDU request = new PDU();
+        PDU request = createPdu(device);
         // NOTE: sent as an OctetString (works for string-typed objects like
         // sysLocation/sysContact). Integer-typed objects (e.g. ifAdminStatus)
         // would need an Integer32 -- a future typed-SET enhancement.
@@ -202,25 +220,107 @@ public class Snmp4jClient implements SnmpClient {
     }
 
     // =========================================================================
-    // Shared helpers
+    // Version plumbing: target + PDU construction
     // =========================================================================
 
-    /** Build a v1/v2c CommunityTarget from the device's version + community. */
+    /**
+     * v1/v2c -> CommunityTarget (community string is the credential).
+     * v3     -> UserTarget (USM user; security level derived from which
+     *           passwords are present).
+     */
     private Target buildTarget(SnmpDevice device) {
-        int version = switch (device.version()) {
-            case V1  -> SnmpConstants.version1;
-            case V2C -> SnmpConstants.version2c;
-            case V3  -> throw new SnmpException(
-                    "SNMPv3 is not supported yet; register the device as V1 or V2C");
+        Target target = switch (device.version()) {
+            case V1 -> {
+                CommunityTarget t = new CommunityTarget();
+                t.setCommunity(new OctetString(device.community()));
+                t.setVersion(SnmpConstants.version1);
+                yield t;
+            }
+            case V2C -> {
+                CommunityTarget t = new CommunityTarget();
+                t.setCommunity(new OctetString(device.community()));
+                t.setVersion(SnmpConstants.version2c);
+                yield t;
+            }
+            case V3 -> {
+                SnmpV3Credentials creds = requireV3(device);
+                ensureV3UserRegistered(creds);
+                UserTarget t = new UserTarget();
+                t.setSecurityName(new OctetString(creds.username()));
+                t.setSecurityLevel(securityLevel(creds));
+                t.setVersion(SnmpConstants.version3);
+                yield t;
+            }
         };
-        CommunityTarget target = new CommunityTarget();
-        target.setCommunity(new OctetString(device.community()));
         target.setAddress(GenericAddress.parse("udp:" + device.host() + "/" + device.port()));
-        target.setVersion(version);
         target.setRetries(1);
-        target.setTimeout(2000);
+        target.setTimeout(3000); // v3 needs an extra round-trip for engine discovery
         return target;
     }
+
+    /**
+     * v1/v2c use a plain PDU; v3 uses a ScopedPDU which can carry a context
+     * name (snmpsim selects the recording by context, mirroring the community).
+     */
+    private PDU createPdu(SnmpDevice device) {
+        if (device.version() != com.networking.ems.snmp.model.SnmpVersion.V3) {
+            return new PDU();
+        }
+        ScopedPDU pdu = new ScopedPDU();
+        SnmpV3Credentials creds = requireV3(device);
+        if (creds.contextName() != null && !creds.contextName().isBlank()) {
+            pdu.setContextName(new OctetString(creds.contextName()));
+        }
+        return pdu;
+    }
+
+    /** Add the v3 user to the shared USM once; SNMP4J localizes it per engine. */
+    private void ensureV3UserRegistered(SnmpV3Credentials creds) {
+        String key = creds.username() + "|" + creds.authPassword() + "|" + creds.privPassword()
+                + "|" + creds.authProtocol() + "|" + creds.privProtocol();
+        if (!registeredV3Users.add(key)) {
+            return; // already registered
+        }
+        OID authProto = null;
+        OctetString authPass = null;
+        if (creds.authPassword() != null) {
+            authProto = "SHA".equalsIgnoreCase(creds.authProtocol()) ? AuthSHA.ID : AuthMD5.ID;
+            authPass = new OctetString(creds.authPassword());
+        }
+        OID privProto = null;
+        OctetString privPass = null;
+        if (creds.privPassword() != null) {
+            privProto = (creds.privProtocol() != null
+                    && creds.privProtocol().toUpperCase().startsWith("AES"))
+                    ? PrivAES128.ID : PrivDES.ID;
+            privPass = new OctetString(creds.privPassword());
+        }
+        snmp.getUSM().addUser(new OctetString(creds.username()),
+                new UsmUser(new OctetString(creds.username()),
+                        authProto, authPass, privProto, privPass));
+    }
+
+    /** Which passwords are present decides the v3 security level. */
+    private int securityLevel(SnmpV3Credentials creds) {
+        if (creds.authPassword() == null) {
+            return SecurityLevel.NOAUTH_NOPRIV;
+        }
+        if (creds.privPassword() == null) {
+            return SecurityLevel.AUTH_NOPRIV;
+        }
+        return SecurityLevel.AUTH_PRIV;
+    }
+
+    private SnmpV3Credentials requireV3(SnmpDevice device) {
+        if (device.v3() == null || device.v3().username() == null) {
+            throw new SnmpException("Device is V3 but has no v3 credentials (username required)");
+        }
+        return device.v3();
+    }
+
+    // =========================================================================
+    // Shared helpers
+    // =========================================================================
 
     /** Send a request over the shared session; throws on transport failure/timeout. */
     private PDU sendRaw(SnmpDevice device, PDU request) {
@@ -235,9 +335,19 @@ public class Snmp4jClient implements SnmpClient {
         if (event == null || event.getResponse() == null) {
             throw new SnmpTimeoutException(
                     "No response from " + device.host() + ":" + device.port()
-                    + " (check host/port/community/version and that the agent is running)");
+                    + " (check host/port/credentials/version and that the agent is running)");
         }
-        return event.getResponse();
+        PDU response = event.getResponse();
+
+        // v3: authentication/decryption failures come back as REPORT PDUs
+        // (usmStats counters), not as timeouts -- surface them clearly.
+        if (response.getType() == PDU.REPORT) {
+            String detail = response.getVariableBindings().isEmpty()
+                    ? "unknown" : response.get(0).getOid().toString();
+            throw new SnmpException("SNMPv3 REPORT from " + device.host()
+                    + " (usmStats " + detail + ") -- wrong username/passwords/protocols?");
+        }
+        return response;
     }
 
     private void checkErrorStatus(PDU response, String context) {

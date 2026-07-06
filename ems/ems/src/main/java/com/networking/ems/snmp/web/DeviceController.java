@@ -35,7 +35,8 @@ public class DeviceController {
     }
 
     private SnmpDevice device(String host, int port, String community, SnmpVersion version) {
-        return new SnmpDevice(host, port, version, community);
+        // ad-hoc endpoints support v1/v2c only; use registered devices for v3
+        return new SnmpDevice(host, port, version, community, null);
     }
 
     @GetMapping("/sysname")
