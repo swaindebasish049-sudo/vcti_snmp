@@ -61,8 +61,35 @@ POST   /devices/{id}/set?oid=&value=  SET (needs RW community)
 2. `docker restart snmpsim`
 3. Register it in the EMS (UI/API), or add it to `SimulatorDeviceInitializer`.
 
-## Notes
+## SNMP versions
 
-- SNMPv3 is not implemented yet (v1/v2c only).
+All operations work over SNMP **v1, v2c and v3**:
+
+- v1/v2c: the community string is the credential (and selects the snmpsim recording)
+- v3: USM credentials; snmpsim's built-in user is `simulator` / auth `auctoritas` (MD5)
+  / priv `privatus` (DES), and the **context name** selects the recording.
+  The startup inventory includes `c6500-v1`, `c6500-v2c` and `c6500-v3` — the same
+  real Catalyst 6500 capture via all three versions, for side-by-side practice.
+
+v3 registration example:
+
+```json
+POST /devices
+{
+  "id": "my-v3-device", "name": "My v3 Device",
+  "host": "127.0.0.1", "port": 1161, "version": "V3",
+  "v3": {
+    "username": "simulator",
+    "authPassword": "auctoritas", "privPassword": "privatus",
+    "authProtocol": "MD5", "privProtocol": "DES",
+    "contextName": "real-cisco-c6500"
+  }
+}
+```
+
+`src/snmp/AllVersionsTest.java` is a standalone harness that runs every operation
+across all three versions against snmpsim (no Spring needed).
+
+## Notes
 - The device inventory is in-memory; the simulator devices are re-registered on every start.
 - To share the lab on a LAN, allow inbound TCP 8080 (UI/API) and UDP 1161 (direct SNMP) in Windows Firewall.
