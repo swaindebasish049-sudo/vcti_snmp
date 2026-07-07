@@ -3,211 +3,513 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EMS &middot; SNMP Lab</title>
+<title>EMS &middot; Network Operations Console</title>
 <style>
   :root {
-    --bg: #f6f7f9; --card: #ffffff; --border: #e3e6ea;
-    --text: #1f2430; --muted: #6b7280; --accent: #0d6efd;
-    --green: #16a34a; --red: #dc2626;
+    --bg: #0f172a; --panel: #1e293b; --panel2: #16213a; --border: #334155;
+    --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8;
+    --green: #4ade80; --red: #f87171; --amber: #fbbf24; --gray: #64748b;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-         background: var(--bg); color: var(--text); }
-  header { background: var(--card); border-bottom: 1px solid var(--border);
-           padding: 16px 28px; display: flex; align-items: baseline; gap: 14px; }
-  header h1 { margin: 0; font-size: 20px; }
-  header span { color: var(--muted); font-size: 13px; }
-  main { display: grid; grid-template-columns: 380px 1fr; gap: 20px;
-         padding: 20px 28px; max-width: 1300px; margin: 0 auto; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+         background: var(--bg); color: var(--text); font-size: 14px; }
 
-  .panel-title { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
-                 color: var(--muted); margin: 0 0 10px; }
-  .device { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-            padding: 14px 16px; margin-bottom: 12px; cursor: pointer; }
+  /* ---------- top bar ---------- */
+  header { background: var(--panel); border-bottom: 1px solid var(--border);
+           padding: 12px 22px; display: flex; align-items: center; gap: 18px; }
+  header h1 { margin: 0; font-size: 17px; letter-spacing: .02em; }
+  header h1 span { color: var(--accent); }
+  .chips { display: flex; gap: 10px; margin-left: auto; align-items: center; }
+  .chip { background: var(--panel2); border: 1px solid var(--border); border-radius: 999px;
+          padding: 4px 14px; font-size: 12.5px; color: var(--muted); }
+  .chip b { color: var(--text); }
+  .chip.up b   { color: var(--green); }
+  .chip.down b { color: var(--red); }
+  header button { font: inherit; font-size: 12.5px; background: var(--panel2); color: var(--text);
+                  border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+  header button:hover { border-color: var(--accent); }
+
+  /* ---------- layout ---------- */
+  main { display: grid; grid-template-columns: 360px 1fr; gap: 16px;
+         padding: 16px 22px 0; max-width: 1500px; margin: 0 auto; }
+  @media (max-width: 950px) { main { grid-template-columns: 1fr; } }
+  .panel-title { font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em;
+                 color: var(--muted); margin: 0 0 8px; }
+
+  /* ---------- inventory ---------- */
+  #search { width: 100%; font: inherit; padding: 7px 10px; margin-bottom: 10px;
+            background: var(--panel2); border: 1px solid var(--border);
+            border-radius: 8px; color: var(--text); }
+  #deviceList { max-height: calc(100vh - 250px); overflow-y: auto; padding-right: 4px; }
+  .device { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+            padding: 11px 13px; margin-bottom: 8px; cursor: pointer; display: flex; gap: 10px; }
   .device:hover { border-color: var(--accent); }
-  .device.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(13,110,253,.15); }
-  .device .name { font-weight: 600; }
-  .device .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  .pill { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px;
-          background: #eef2ff; color: #4338ca; margin-left: 6px; }
+  .device.active { border-color: var(--accent); box-shadow: 0 0 0 1.5px rgba(56,189,248,.35); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex: none;
+         background: var(--gray); }
+  .dot.up { background: var(--green); box-shadow: 0 0 6px rgba(74,222,128,.7); }
+  .dot.down { background: var(--red); box-shadow: 0 0 6px rgba(248,113,113,.7); }
+  .device .name { font-weight: 600; font-size: 13.5px; }
+  .device .meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .pill { display: inline-block; font-size: 10.5px; padding: 0 7px; border-radius: 999px;
+          margin-left: 6px; background: #1e3a8a; color: #93c5fd; vertical-align: 1px; }
+  .pill.v1 { background: #431407; color: var(--amber); }
+  .pill.v3 { background: #052e16; color: var(--green); }
 
-  .workbench { background: var(--card); border: 1px solid var(--border);
-               border-radius: 10px; padding: 18px 20px; min-height: 480px; }
-  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-  button { font: inherit; padding: 7px 14px; border-radius: 8px; cursor: pointer;
-           border: 1px solid var(--border); background: #fff; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button:disabled { opacity: .5; cursor: default; }
-  input[type=text] { font: inherit; padding: 7px 10px; border: 1px solid var(--border);
-                     border-radius: 8px; min-width: 240px; }
+  /* ---------- detail ---------- */
+  .detail { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+            min-height: 430px; display: flex; flex-direction: column; }
+  .detail-head { padding: 14px 18px 0; }
+  .detail-head h2 { margin: 0 0 2px; font-size: 16px; }
+  .detail-head .sub { color: var(--muted); font-size: 12.5px; }
+  .tabs { display: flex; gap: 2px; padding: 12px 18px 0; border-bottom: 1px solid var(--border); }
+  .tabs button { font: inherit; font-size: 13px; font-weight: 600; background: none; border: none;
+                 color: var(--muted); padding: 8px 16px; cursor: pointer;
+                 border-bottom: 2px solid transparent; }
+  .tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-body { padding: 16px 18px; overflow-x: auto; flex: 1; }
+  .placeholder { color: var(--muted); padding: 40px; text-align: center; }
+
+  /* overview cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+  .card { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+          padding: 11px 14px; }
+  .card .k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .card .v { margin-top: 4px; font-size: 13.5px; word-break: break-word; }
+
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 600; }
-  td.oid { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--muted); }
-  .badge-up   { color: var(--green); font-weight: 600; }
-  .badge-down { color: var(--red);   font-weight: 600; }
-  .status { font-size: 13px; color: var(--muted); margin: 8px 0; min-height: 18px; }
-  .error { color: var(--red); }
-  .hint { color: var(--muted); font-size: 13px; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.oid { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: var(--muted); }
+  .up-t   { color: var(--green); font-weight: 600; }
+  .down-t { color: var(--red); font-weight: 600; }
+
+  /* tools */
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px;
+         overflow: hidden; margin-bottom: 12px; flex-wrap: wrap; }
+  .seg button { font: inherit; font-size: 12.5px; font-weight: 600; border: none;
+                border-right: 1px solid var(--border); padding: 7px 15px;
+                background: var(--panel2); color: var(--text); cursor: pointer; }
+  .seg button:last-child { border-right: none; }
+  .seg button.on { background: var(--accent); color: #06283d; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row input[type=text], .row select {
+        font: inherit; padding: 7px 10px; background: var(--panel2);
+        border: 1px solid var(--border); border-radius: 8px; color: var(--text); }
+  #oidInput { min-width: 280px; flex: 1; }
+  #valueInput { min-width: 180px; display: none; }
+  .run { font: inherit; font-weight: 600; background: var(--accent); color: #06283d;
+         border: none; border-radius: 8px; padding: 8px 18px; cursor: pointer; }
+  .op-hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  #toolOut { margin-top: 14px; }
+
+  /* ---------- event console ---------- */
+  .console-wrap { max-width: 1500px; margin: 14px auto 0; padding: 0 22px 18px; }
+  .console-wrap code { background: var(--panel2); padding: 1px 6px; border-radius: 5px;
+                       font-size: 11.5px; color: var(--accent); }
+  .adhoc { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .adhoc .row input, .adhoc .row select {
+        font: inherit; padding: 7px 10px; background: var(--panel2);
+        border: 1px solid var(--border); border-radius: 8px; color: var(--text); }
+  .console { background: #0b1120; border: 1px solid var(--border); border-radius: 10px;
+             height: 150px; overflow-y: auto; padding: 8px 12px;
+             font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .ev { margin: 2px 0; }
+  .ev .t { color: var(--gray); }
+  .ev.info .m { color: var(--muted); }
+  .ev.ok .m { color: var(--green); }
+  .ev.err .m { color: var(--red); }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>EMS &middot; SNMP Lab</h1>
-  <span>simulated Cisco devices served by snmpsim &mdash; pick a device, then query it</span>
+  <h1>EMS <span>&middot;</span> Network Operations Console</h1>
+  <div class="chips">
+    <span class="chip">Devices <b id="cTotal">–</b></span>
+    <span class="chip up">Reachable <b id="cUp">–</b></span>
+    <span class="chip down">Unreachable <b id="cDown">–</b></span>
+    <button onclick="pollAll()">&#8635; Refresh status</button>
+    <label style="font-size:12px;color:var(--muted)">
+      <input type="checkbox" id="autoRef" onchange="toggleAuto()"> auto 30s
+    </label>
+  </div>
 </header>
 
 <main>
   <section>
-    <p class="panel-title">Devices</p>
-    <div id="deviceList"><p class="hint">Loading devices&hellip;</p></div>
+    <p class="panel-title">Device inventory</p>
+    <input id="search" placeholder="filter devices..." oninput="filterDevices()">
+    <div id="deviceList"><div class="placeholder">Loading inventory&hellip;</div></div>
   </section>
 
   <section>
-    <p class="panel-title">Workbench</p>
-    <div class="workbench">
-      <div id="noDevice" class="hint">Select a device on the left to start querying.</div>
-      <div id="tools" style="display:none">
-        <div class="toolbar">
-          <button class="primary" onclick="systemInfo()">System Info</button>
-          <button class="primary" onclick="interfaces()">Interfaces</button>
-          <input type="text" id="oidInput" placeholder="Custom OID e.g. 1.3.6.1.2.1.1.1.0">
-          <button onclick="customGet()">GET</button>
-          <button onclick="customWalk()">WALK</button>
-        </div>
-        <div class="status" id="status"></div>
-        <div id="output"></div>
+    <p class="panel-title">Device details</p>
+    <div class="detail">
+      <div class="detail-head" id="detailHead">
+        <h2>No device selected</h2>
+        <div class="sub">Select a device from the inventory to view details.</div>
       </div>
+      <div class="tabs" id="tabs" style="display:none">
+        <button data-tab="overview" class="on" onclick="pickTab(this)">Overview</button>
+        <button data-tab="interfaces" onclick="pickTab(this)">Interfaces</button>
+        <button data-tab="tools" onclick="pickTab(this)">Tools</button>
+      </div>
+      <div class="tab-body" id="tabBody"><div class="placeholder">&nbsp;</div></div>
     </div>
   </section>
 </main>
 
+<div class="console-wrap">
+  <p class="panel-title">Ad-hoc probe &mdash; no registration (hits <code>/device/**</code>, the DeviceController; v1/v2c only)</p>
+  <div class="adhoc">
+    <div class="row">
+      <input id="ahHost" type="text" placeholder="host" value="127.0.0.1" style="width:120px">
+      <input id="ahPort" type="text" placeholder="port" value="1161" style="width:64px">
+      <input id="ahComm" type="text" placeholder="community" value="real-cisco-c6500" style="width:150px">
+      <select id="ahVer"><option value="V1">V1</option><option value="V2C" selected>V2C</option></select>
+      <select id="ahOp" onchange="ahToggleVal()">
+        <option>GET</option><option>GETNEXT</option><option>WALK</option><option>SET</option>
+      </select>
+      <input id="ahOid" type="text" placeholder="OID" value="1.3.6.1.2.1.1.5.0" style="min-width:230px;flex:1">
+      <input id="ahVal" type="text" placeholder="value (SET)" style="width:150px;display:none">
+      <button class="run" onclick="adhocRun()">Run</button>
+    </div>
+    <div id="ahOut" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<div class="console-wrap">
+  <p class="panel-title">Event console</p>
+  <div class="console" id="console"></div>
+</div>
+
 <script>
 const OIDS = {
-  sysDescr:  "1.3.6.1.2.1.1.1.0", sysUpTime:  "1.3.6.1.2.1.1.3.0",
-  sysContact:"1.3.6.1.2.1.1.4.0", sysName:    "1.3.6.1.2.1.1.5.0",
-  sysLocation:"1.3.6.1.2.1.1.6.0",
-  ifDescr: "1.3.6.1.2.1.2.2.1.2", ifOperStatus: "1.3.6.1.2.1.2.2.1.8",
-  ifSpeed: "1.3.6.1.2.1.2.2.1.5"
+  sysDescr:"1.3.6.1.2.1.1.1.0", sysUpTime:"1.3.6.1.2.1.1.3.0",
+  sysContact:"1.3.6.1.2.1.1.4.0", sysName:"1.3.6.1.2.1.1.5.0", sysLocation:"1.3.6.1.2.1.1.6.0",
+  ifDescr:"1.3.6.1.2.1.2.2.1.2", ifSpeed:"1.3.6.1.2.1.2.2.1.5",
+  ifOper:"1.3.6.1.2.1.2.2.1.8", ifIn:"1.3.6.1.2.1.2.2.1.10", ifOut:"1.3.6.1.2.1.2.2.1.16"
 };
-let selected = null;
+const HINTS = {
+  GET:"Fetch one exact OID. Scalars end in .0",
+  GETMULTI:"Several OIDs in ONE request - separate with commas",
+  GETNEXT:"Returns the next OID after the one given",
+  WALK:"Fetch a whole subtree. v1 -> GETNEXT loop, v2c/v3 -> GETBULK",
+  SET:"Writes a string value. Needs a writable agent (e.g. community 'variation/writecache')"
+};
+let devices = [], selected = null, tab = "overview", op = "GET", auto = null;
+const status = {};   // id -> {up:bool, uptime:string}
 
-/* SNMP values are untrusted text; escape them so strings like "<private>"
-   render literally instead of being parsed as HTML. */
-function esc(s) {
-  return String(s).replace(/[&<>"']/g,
-      c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+
+function logEv(level, msg) {
+  const c = document.getElementById("console");
+  const t = new Date().toLocaleTimeString();
+  c.insertAdjacentHTML("afterbegin",
+    `<div class="ev ${level}"><span class="t">${t}</span>  <span class="m">${msg}</span></div>`);
+  while (c.children.length > 80) c.removeChild(c.lastChild);
 }
 
-async function api(path) {
-  const res = await fetch(path);
+async function api(path, opts) {
+  const res = await fetch(path, opts);
   const body = await res.json();
   if (!res.ok) throw new Error(body.message || res.statusText);
   return body;
 }
 
+/* ---------------- inventory + reachability ---------------- */
+
 async function loadDevices() {
-  const list = document.getElementById("deviceList");
   try {
-    const devices = await api("/devices");
-    list.innerHTML = "";
-    devices.forEach(d => {
-      const el = document.createElement("div");
-      el.className = "device"; el.id = "dev-" + d.id;
-      el.innerHTML = `<div class="name">${esc(d.name)}<span class="pill">${esc(d.version)}</span></div>
-                      <div class="meta">${esc(d.id)} &middot; ${esc(d.host)}:${esc(d.port)} &middot; ${esc(d.location ?? "")}</div>`;
-      el.onclick = () => select(d);
-      list.appendChild(el);
-    });
-    if (!devices.length) list.innerHTML = '<p class="hint">No devices registered yet.</p>';
+    devices = await api("/devices");
+    renderList();
+    logEv("info", `Inventory loaded: ${devices.length} devices`);
+    pollAll();
   } catch (e) {
-    list.innerHTML = `<p class="error">Failed to load devices: ${e.message}</p>`;
+    document.getElementById("deviceList").innerHTML =
+      `<div class="placeholder">Failed: ${esc(e.message)}</div>`;
   }
 }
 
+function renderList() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  const list = document.getElementById("deviceList");
+  list.innerHTML = "";
+  devices
+    .filter(d => !q || (d.name + d.id + (d.vendor??"") + (d.location??"")).toLowerCase().includes(q))
+    .forEach(d => {
+      const st = status[d.id];
+      const dotCls = st == null ? "" : st.up ? "up" : "down";
+      const vcls = d.version === "V1" ? "v1" : d.version === "V3" ? "v3" : "";
+      const el = document.createElement("div");
+      el.className = "device" + (selected && selected.id === d.id ? " active" : "");
+      el.innerHTML =
+        `<div class="dot ${dotCls}" id="dot-${esc(d.id)}"></div>
+         <div><div class="name">${esc(d.name)}<span class="pill ${vcls}">${esc(d.version)}</span></div>
+         <div class="meta">${esc(d.host)}:${esc(d.port)} &middot; ${esc(d.vendor ?? "")} &middot; ${esc(d.location ?? "")}</div></div>`;
+      el.onclick = () => select(d);
+      list.appendChild(el);
+    });
+  updateChips();
+}
+function filterDevices(){ renderList(); }
+
+function updateChips() {
+  const vals = Object.values(status);
+  document.getElementById("cTotal").textContent = devices.length;
+  document.getElementById("cUp").textContent = vals.filter(s => s && s.up).length;
+  document.getElementById("cDown").textContent = vals.filter(s => s && !s.up).length;
+}
+
+async function pollAll() {
+  logEv("info", "Reachability poll started (GET sysUpTime on every device)");
+  const queue = [...devices];
+  const workers = Array.from({length: 4}, async () => {
+    while (queue.length) {
+      const d = queue.shift();
+      try {
+        const r = await api(`/devices/${encodeURIComponent(d.id)}/get?oid=${OIDS.sysUpTime}`);
+        status[d.id] = { up: true, uptime: r.value };
+      } catch (e) {
+        status[d.id] = { up: false, uptime: null };
+        logEv("err", `${esc(d.id)} unreachable: ${esc(e.message)}`);
+      }
+      const dot = document.getElementById("dot-" + d.id);
+      if (dot) dot.className = "dot " + (status[d.id].up ? "up" : "down");
+      updateChips();
+    }
+  });
+  await Promise.all(workers);
+  logEv("ok", "Reachability poll finished");
+}
+
+function toggleAuto() {
+  if (document.getElementById("autoRef").checked) {
+    auto = setInterval(pollAll, 30000);
+    logEv("info", "Auto-refresh enabled (30s)");
+  } else { clearInterval(auto); auto = null; logEv("info", "Auto-refresh disabled"); }
+}
+
+/* ---------------- detail tabs ---------------- */
+
 function select(d) {
   selected = d;
-  document.querySelectorAll(".device").forEach(el => el.classList.remove("active"));
-  document.getElementById("dev-" + d.id).classList.add("active");
-  document.getElementById("noDevice").style.display = "none";
-  document.getElementById("tools").style.display = "block";
-  setStatus(`Selected <b>${esc(d.name)}</b> — community-mapped recording on snmpsim`);
-  document.getElementById("output").innerHTML = "";
+  renderList();
+  document.getElementById("tabs").style.display = "flex";
+  const st = status[d.id];
+  document.getElementById("detailHead").innerHTML =
+    `<h2>${esc(d.name)}</h2>
+     <div class="sub">${esc(d.id)} &middot; ${esc(d.host)}:${esc(d.port)} &middot; SNMP ${esc(d.version)}
+     ${st && st.up ? ' &middot; <span class="up-t">reachable</span>' :
+       st ? ' &middot; <span class="down-t">unreachable</span>' : ''}</div>`;
+  pickTab(document.querySelector('.tabs button[data-tab="' + tab + '"]'));
 }
 
-function setStatus(html, isError) {
-  const s = document.getElementById("status");
-  s.innerHTML = html; s.className = "status" + (isError ? " error" : "");
+function pickTab(btn) {
+  if (!btn) return;
+  tab = btn.dataset.tab;
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b === btn));
+  if (tab === "overview") renderOverview();
+  else if (tab === "interfaces") renderInterfaces();
+  else renderTools();
 }
 
-function renderRows(title, rows) {
-  document.getElementById("output").innerHTML =
-    `<h3 style="margin:6px 0 10px;font-size:15px">${title}</h3>
-     <table><tr><th style="width:40%">${rows.header[0]}</th><th>${rows.header[1]}</th></tr>
-     ${rows.data.map(r => `<tr><td class="${rows.oidCol ? 'oid' : ''}">${r[0]}</td><td>${r[1]}</td></tr>`).join("")}
-     </table>`;
-}
-
-async function systemInfo() {
-  if (!selected) return;
-  setStatus("Fetching system group (multi-OID GET)&hellip;");
+async function renderOverview() {
+  const body = document.getElementById("tabBody");
+  body.innerHTML = `<div class="placeholder">Loading system group&hellip;</div>`;
   try {
-    const q = Object.values(OIDS).slice(0, 5).map(o => "oid=" + o).join("&");
-    const res = await api(`/devices/${selected.id}/get-multi?${q}`);
-    const names = Object.keys(OIDS).slice(0, 5);
-    renderRows("System Info — " + esc(selected.name), {
-      header: ["Object", "Value"],
-      data: res.map((r, i) => [names[i] ?? r.oid, esc(r.value)])
-    });
-    setStatus(`OK — ${res.length} values via one GET request`);
-  } catch (e) { setStatus("Error: " + e.message, true); }
+    const q = [OIDS.sysDescr, OIDS.sysUpTime, OIDS.sysContact, OIDS.sysName, OIDS.sysLocation]
+      .map(o => "oid=" + o).join("&");
+    const r = await api(`/devices/${encodeURIComponent(selected.id)}/get-multi?${q}`);
+    const card = (k, v) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    body.innerHTML = `<div class="cards">
+      ${card("System name", esc(r[3].value))}
+      ${card("Uptime", esc(r[1].value))}
+      ${card("Contact", esc(r[2].value))}
+      ${card("Location (SNMP)", esc(r[4].value))}
+      ${card("Vendor / registry", esc(selected.vendor ?? "-") + " / " + esc(selected.location ?? "-"))}
+      ${card("SNMP", esc(selected.version) + " @ " + esc(selected.host) + ":" + esc(selected.port))}
+      <div class="card" style="grid-column:1/-1"><div class="k">sysDescr</div>
+        <div class="v">${esc(r[0].value)}</div></div>
+    </div>`;
+    logEv("ok", `${esc(selected.id)}: overview loaded (multi-GET, 5 OIDs)`);
+  } catch (e) {
+    body.innerHTML = `<div class="placeholder">${esc(e.message)}</div>`;
+    logEv("err", `${esc(selected.id)}: overview failed - ${esc(e.message)}`);
+  }
 }
 
-async function interfaces() {
-  if (!selected) return;
-  setStatus("Walking ifDescr + ifOperStatus (GETBULK)&hellip;");
+function fmtSpeed(v) {
+  const n = Number(v);
+  if (!isFinite(n) || n <= 0) return "-";
+  if (n >= 1e9) return (n / 1e9) + " Gbps";
+  if (n >= 1e6) return (n / 1e6) + " Mbps";
+  return n + " bps";
+}
+function fmtBytes(v) {
+  let n = Number(v);
+  if (!isFinite(n)) return esc(v);
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(n >= 100 || i === 0 ? 0 : 1) + " " + u[i];
+}
+
+async function renderInterfaces() {
+  const body = document.getElementById("tabBody");
+  const mech = selected.version === "V1" ? "GETNEXT loop" : "GETBULK";
+  body.innerHTML = `<div class="placeholder">Walking interface table (${mech})&hellip;</div>`;
   try {
-    const [descr, oper] = await Promise.all([
-      api(`/devices/${selected.id}/walk?oid=${OIDS.ifDescr}`),
-      api(`/devices/${selected.id}/walk?oid=${OIDS.ifOperStatus}`)
-    ]);
-    const status = {};
-    oper.forEach(r => status[r.oid.split(".").pop()] = r.value);
-    renderRows("Interfaces — " + esc(selected.name), {
-      header: ["Interface", "Oper Status"],
-      data: descr.map(r => {
-        const idx = r.oid.split(".").pop();
-        const up = status[idx] === "1";
-        return [esc(r.value), `<span class="${up ? 'badge-up' : 'badge-down'}">${up ? "up" : "down"}</span>`];
-      })
-    });
-    setStatus(`OK — ${descr.length} interfaces (2 walks)`);
-  } catch (e) { setStatus("Error: " + e.message, true); }
+    const id = encodeURIComponent(selected.id);
+    const [descr, oper, speed, inO, outO] = await Promise.all(
+      [OIDS.ifDescr, OIDS.ifOper, OIDS.ifSpeed, OIDS.ifIn, OIDS.ifOut]
+        .map(o => api(`/devices/${id}/walk?oid=${o}`)));
+    const byIdx = walk => Object.fromEntries(walk.map(r => [r.oid.split(".").pop(), r.value]));
+    const mOper = byIdx(oper), mSpeed = byIdx(speed), mIn = byIdx(inO), mOut = byIdx(outO);
+    const rows = descr.map(r => {
+      const i = r.oid.split(".").pop();
+      const up = mOper[i] === "1";
+      return `<tr><td>${esc(r.value)}</td>
+        <td class="${up ? "up-t" : "down-t"}">${up ? "up" : "down"}</td>
+        <td>${fmtSpeed(mSpeed[i])}</td>
+        <td>${fmtBytes(mIn[i] ?? "-")}</td><td>${fmtBytes(mOut[i] ?? "-")}</td></tr>`;
+    }).join("");
+    body.innerHTML = `<table>
+      <tr><th>Interface</th><th>Status</th><th>Speed</th><th>In (octets)</th><th>Out (octets)</th></tr>
+      ${rows}</table>`;
+    logEv("ok", `${esc(selected.id)}: ${descr.length} interfaces via ${mech} (5 walks)`);
+  } catch (e) {
+    body.innerHTML = `<div class="placeholder">${esc(e.message)}</div>`;
+    logEv("err", `${esc(selected.id)}: interface walk failed - ${esc(e.message)}`);
+  }
 }
 
-async function customGet() {
+/* ---------------- tools (all SNMP methods) ---------------- */
+
+function renderTools() {
+  const body = document.getElementById("tabBody");
+  body.innerHTML = `
+    <div class="seg" id="opSeg">
+      ${["GET","GETMULTI","GETNEXT","WALK","SET"].map(o =>
+        `<button data-op="${o}" class="${o===op?"on":""}" onclick="pickOp(this)">${o === "GETMULTI" ? "MULTI-GET" : o}</button>`).join("")}
+    </div>
+    <div class="row">
+      <select id="presets" onchange="document.getElementById('oidInput').value=this.value">
+        <option value="">common OIDs...</option>
+        <option value="1.3.6.1.2.1.1.1.0">sysDescr (scalar)</option>
+        <option value="1.3.6.1.2.1.1.3.0">sysUpTime (scalar)</option>
+        <option value="1.3.6.1.2.1.1.5.0">sysName (scalar)</option>
+        <option value="1.3.6.1.2.1.1">system subtree (walk)</option>
+        <option value="1.3.6.1.2.1.2.2.1.2">ifDescr table (walk)</option>
+        <option value="1.3.6.1.4.1">vendor tree (walk)</option>
+      </select>
+      <input type="text" id="oidInput" placeholder="OID, e.g. 1.3.6.1.2.1.1.5.0">
+      <input type="text" id="valueInput" placeholder="value to SET">
+      <button class="run" onclick="runOp()">Run</button>
+    </div>
+    <div class="op-hint" id="opHint">${HINTS[op]}</div>
+    <div id="toolOut"></div>`;
+  if (op === "SET") document.getElementById("valueInput").style.display = "inline-block";
+}
+
+function pickOp(btn) {
+  op = btn.dataset.op;
+  document.querySelectorAll("#opSeg button").forEach(b => b.classList.toggle("on", b === btn));
+  document.getElementById("valueInput").style.display = op === "SET" ? "inline-block" : "none";
+  document.getElementById("oidInput").placeholder =
+    op === "GETMULTI" ? "OIDs comma-separated: 1.3.6.1.2.1.1.1.0, 1.3.6.1.2.1.1.5.0"
+                      : "OID, e.g. 1.3.6.1.2.1.1.5.0";
+  document.getElementById("opHint").textContent = HINTS[op];
+}
+
+function toolTable(title, rows) {
+  document.getElementById("toolOut").innerHTML =
+    `<h3 style="margin:14px 0 8px;font-size:14px">${title}</h3>
+     <table><tr><th style="width:45%">OID</th><th>Value</th></tr>
+     ${rows.map(r => `<tr><td class="oid">${r[0]}</td><td>${r[1]}</td></tr>`).join("")}</table>`;
+}
+
+async function runOp() {
   const oid = document.getElementById("oidInput").value.trim();
   if (!selected || !oid) return;
-  setStatus("GET " + oid + "&hellip;");
+  const id = encodeURIComponent(selected.id);
+  const t0 = performance.now();
   try {
-    const r = await api(`/devices/${selected.id}/get?oid=${encodeURIComponent(oid)}`);
-    renderRows("GET result", { header: ["OID", "Value"], oidCol: true, data: [[r.oid, esc(r.value)]] });
-    setStatus("OK");
-  } catch (e) { setStatus("Error: " + e.message, true); }
+    if (op === "GET") {
+      const r = await api(`/devices/${id}/get?oid=${encodeURIComponent(oid)}`);
+      toolTable("GET result", [[r.oid, esc(r.value)]]);
+    } else if (op === "GETMULTI") {
+      const oids = oid.split(",").map(s => s.trim()).filter(Boolean);
+      const res = await api(`/devices/${id}/get-multi?` + oids.map(o => "oid=" + encodeURIComponent(o)).join("&"));
+      toolTable(`MULTI-GET - ${res.length} values in one request`, res.map(r => [r.oid, esc(r.value)]));
+    } else if (op === "GETNEXT") {
+      const r = await api(`/devices/${id}/getnext?oid=${encodeURIComponent(oid)}`);
+      toolTable("GETNEXT - the OID that follows", [[r.oid, esc(r.value)]]);
+    } else if (op === "WALK") {
+      const res = await api(`/devices/${id}/walk?oid=${encodeURIComponent(oid)}`);
+      const mech = selected.version === "V1" ? "GETNEXT loop" : "GETBULK";
+      toolTable(`WALK - ${res.length} rows (${mech})`, res.map(r => [r.oid, esc(r.value)]));
+    } else if (op === "SET") {
+      const value = document.getElementById("valueInput").value;
+      if (!value) return;
+      const r = await api(`/devices/${id}/set?oid=${encodeURIComponent(oid)}&value=${encodeURIComponent(value)}`,
+                          { method: "POST" });
+      toolTable("SET accepted - agent returned", [[r.oid, esc(r.value)]]);
+    }
+    const ms = Math.round(performance.now() - t0);
+    logEv("ok", `${esc(selected.id)}: ${op} ${esc(oid)} ok (${ms} ms)`);
+  } catch (e) {
+    document.getElementById("toolOut").innerHTML =
+      `<div class="placeholder">${esc(e.message)}</div>`;
+    logEv("err", `${esc(selected.id)}: ${op} ${esc(oid)} failed - ${esc(e.message)}`);
+  }
 }
 
-async function customWalk() {
-  const oid = document.getElementById("oidInput").value.trim();
-  if (!selected || !oid) return;
-  setStatus("WALK " + oid + "&hellip;");
+/* ---------------- ad-hoc probe (DeviceController, /device/**) ---------------- */
+
+function ahToggleVal() {
+  document.getElementById("ahVal").style.display =
+    document.getElementById("ahOp").value === "SET" ? "inline-block" : "none";
+}
+
+async function adhocRun() {
+  const host = document.getElementById("ahHost").value.trim();
+  const port = document.getElementById("ahPort").value.trim() || "161";
+  const comm = document.getElementById("ahComm").value.trim();
+  const ver  = document.getElementById("ahVer").value;
+  const oper = document.getElementById("ahOp").value;
+  const oid  = document.getElementById("ahOid").value.trim();
+  const val  = document.getElementById("ahVal").value;
+  const out  = document.getElementById("ahOut");
+  if (!host || !oid) { out.innerHTML = `<div class="placeholder">host and OID are required</div>`; return; }
+
+  const base = `host=${encodeURIComponent(host)}&port=${encodeURIComponent(port)}`
+             + `&community=${encodeURIComponent(comm)}&version=${ver}`;
+  const t0 = performance.now();
   try {
-    const res = await api(`/devices/${selected.id}/walk?oid=${encodeURIComponent(oid)}`);
-    renderRows(`WALK — ${res.length} results`, {
-      header: ["OID", "Value"], oidCol: true, data: res.map(r => [r.oid, esc(r.value)])
-    });
-    setStatus(`OK — ${res.length} rows`);
-  } catch (e) { setStatus("Error: " + e.message, true); }
+    let rows, title;
+    if (oper === "GET") {
+      const r = await api(`/device/get?${base}&oid=${encodeURIComponent(oid)}`);
+      rows = [[r.oid, esc(r.value)]]; title = "GET";
+    } else if (oper === "GETNEXT") {
+      const r = await api(`/device/getnext?${base}&oid=${encodeURIComponent(oid)}`);
+      rows = [[r.oid, esc(r.value)]]; title = "GETNEXT";
+    } else if (oper === "WALK") {
+      const res = await api(`/device/walk?${base}&oid=${encodeURIComponent(oid)}`);
+      rows = res.map(r => [r.oid, esc(r.value)]); title = `WALK - ${res.length} rows`;
+    } else {
+      const r = await api(`/device/set?${base}&oid=${encodeURIComponent(oid)}&value=${encodeURIComponent(val)}`,
+                          { method: "POST" });
+      rows = [[r.oid, esc(r.value)]]; title = "SET";
+    }
+    out.innerHTML = `<h3 style="margin:6px 0 8px;font-size:14px">${title}</h3>
+      <table><tr><th style="width:45%">OID</th><th>Value</th></tr>
+      ${rows.map(r => `<tr><td class="oid">${r[0]}</td><td>${r[1]}</td></tr>`).join("")}</table>`;
+    logEv("ok", `ad-hoc ${oper} ${esc(host)}:${esc(port)} ok (${Math.round(performance.now() - t0)} ms)`);
+  } catch (e) {
+    out.innerHTML = `<div class="placeholder">${esc(e.message)}</div>`;
+    logEv("err", `ad-hoc ${oper} ${esc(host)} failed - ${esc(e.message)}`);
+  }
 }
 
 loadDevices();

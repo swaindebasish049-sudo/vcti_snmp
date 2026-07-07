@@ -339,15 +339,34 @@ public class Snmp4jClient implements SnmpClient {
         }
         PDU response = event.getResponse();
 
-        // v3: authentication/decryption failures come back as REPORT PDUs
-        // (usmStats counters), not as timeouts -- surface them clearly.
+        // v3: security failures come back as REPORT PDUs (usmStats counters),
+        // not as timeouts -- decode the counter OID into a precise diagnosis.
         if (response.getType() == PDU.REPORT) {
-            String detail = response.getVariableBindings().isEmpty()
+            String oid = response.getVariableBindings().isEmpty()
                     ? "unknown" : response.get(0).getOid().toString();
             throw new SnmpException("SNMPv3 REPORT from " + device.host()
-                    + " (usmStats " + detail + ") -- wrong username/passwords/protocols?");
+                    + ": " + usmReportReason(oid) + " (" + oid + ")");
         }
         return response;
+    }
+
+    /** Translate RFC 3414 usmStats REPORT counters into actionable messages. */
+    private String usmReportReason(String oid) {
+        return switch (oid) {
+            case "1.3.6.1.6.3.15.1.1.1.0" ->
+                "security level not allowed for this user (agent requires a higher level, e.g. authPriv)";
+            case "1.3.6.1.6.3.15.1.1.2.0" ->
+                "not in time window (engine clock resync; retry usually fixes this)";
+            case "1.3.6.1.6.3.15.1.1.3.0" ->
+                "unknown username";
+            case "1.3.6.1.6.3.15.1.1.4.0" ->
+                "unknown engine id (v3 discovery mismatch)";
+            case "1.3.6.1.6.3.15.1.1.5.0" ->
+                "wrong digest -- auth password or auth protocol (MD5/SHA) is incorrect";
+            case "1.3.6.1.6.3.15.1.1.6.0" ->
+                "decryption error -- priv password or priv protocol (DES/AES) is incorrect";
+            default -> "security failure";
+        };
     }
 
     private void checkErrorStatus(PDU response, String context) {

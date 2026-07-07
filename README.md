@@ -19,8 +19,17 @@ A learning/lab EMS that manages simulated Cisco devices over SNMP (v1/v2c), buil
 docker run -d --name snmpsim --restart unless-stopped \
   -p 1161:161/udp \
   -v "<repo>/snmpsim-data:/usr/local/snmpsim/data" \
+  -e EXTRA_FLAGS="--v3-user=simulator --v3-auth-key=auctoritas --v3-priv-key=privatus --v3-user=authuser --v3-auth-key=authpass123 --v3-user=labuser" \
   tandrup/snmpsim
 ```
+
+The `EXTRA_FLAGS` provision three SNMPv3 users, one per USM security level:
+
+| User | Auth | Priv | Security level |
+|------|------|------|----------------|
+| `labuser` | — | — | noAuthNoPriv |
+| `authuser` | MD5 `authpass123` | — | authNoPriv |
+| `simulator` | MD5 `auctoritas` | DES `privatus` | authPriv |
 
 Simulated devices (SNMP v2c, UDP port **1161**, community selects the device):
 

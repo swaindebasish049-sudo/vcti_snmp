@@ -80,6 +80,23 @@ public class SimulatorDeviceInitializer implements ApplicationRunner {
                     "Cisco", "version practice"));
         }
 
+        // -- USM security-level practice: three users provisioned at different
+        //    levels on the same agent (see EXTRA_FLAGS on the snmpsim container)
+        if (!registry.exists("c6500-v3-noauth")) {
+            registry.register(new ManagedDevice(
+                    "c6500-v3-noauth", "Catalyst 6500 v3 (noAuthNoPriv)", SNMPSIM_HOST, SNMPSIM_PORT,
+                    SnmpVersion.V3, null,
+                    new SnmpV3Credentials("labuser", null, null, null, null, "real-cisco-c6500"),
+                    "Cisco", "USM level practice"));
+        }
+        if (!registry.exists("c6500-v3-authonly")) {
+            registry.register(new ManagedDevice(
+                    "c6500-v3-authonly", "Catalyst 6500 v3 (authNoPriv)", SNMPSIM_HOST, SNMPSIM_PORT,
+                    SnmpVersion.V3, null,
+                    new SnmpV3Credentials("authuser", "authpass123", null, "MD5", null, "real-cisco-c6500"),
+                    "Cisco", "USM level practice"));
+        }
+
         log.info("Registered {} simulator devices (snmpsim @ {}:{})",
                 registry.list().size(), SNMPSIM_HOST, SNMPSIM_PORT);
     }
