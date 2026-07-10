@@ -13,6 +13,7 @@ import org.snmp4j.smi.UdpAddress;
 import org.snmp4j.transport.DefaultUdpTransportMapping;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 /**
  * Creates ONE shared SNMP session for the whole application.
@@ -34,6 +35,7 @@ import org.springframework.context.annotation.Configuration;
 public class SnmpSessionConfig {
 
     @Bean(destroyMethod = "close")
+    @Primary // the query session is the default Snmp bean; the trap receiver has its own
     public Snmp snmp() throws IOException {
         // Bind to an ephemeral local UDP port for sending/receiving manager traffic.
         TransportMapping<UdpAddress> transport =

@@ -47,6 +47,9 @@ public class SimulatorDeviceInitializer implements ApplicationRunner {
         // -- hand-authored recordings (synthetic but Cisco-realistic), v2c --
         register("cisco-2621",  "Cisco 2621 Edge Router",     "cisco-2621-router",  "Cisco", "EMS Lab - Rack 1");
         register("cisco-3640",  "Cisco 3640 Core Router",     "cisco-3640-router",  "Cisco", "EMS Lab - Rack 1");
+        // Writable twin of the 3640: same real Cisco data, but sysName/sysContact/sysLocation
+        // are :writecache-backed in the recording, so SET works (unlike the read-only captures).
+        register("cisco-3640w", "Cisco 3640 Core Router (writable)", "cisco-3640-writable", "Cisco", "EMS Lab - Rack 1");
         register("cisco-7204",  "Cisco 7204 Backbone Router", "cisco-7204-router",  "Cisco", "EMS Lab - Rack 2");
         register("cisco-c6506", "Cisco Catalyst 6506 Switch", "cisco-c6506-switch", "Cisco", "EMS Lab - DC Row A");
 

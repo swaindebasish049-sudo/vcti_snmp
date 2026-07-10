@@ -55,6 +55,12 @@
           margin-left: 6px; background: #1e3a8a; color: #93c5fd; vertical-align: 1px; }
   .pill.v1 { background: #431407; color: var(--amber); }
   .pill.v3 { background: #052e16; color: var(--green); }
+  /* v3 USM security-level badge (color = strength) */
+  .usm { display: inline-block; font-size: 10px; padding: 0 7px; border-radius: 999px;
+         margin-left: 6px; border: 1px solid var(--border); vertical-align: 1px; }
+  .usm.noauth { background: #450a0a; color: var(--red); }    /* noAuthNoPriv - weakest */
+  .usm.auth   { background: #422006; color: var(--amber); }  /* authNoPriv - signed, cleartext */
+  .usm.priv   { background: #052e16; color: var(--green); }  /* authPriv - signed + encrypted */
 
   /* ---------- detail ---------- */
   .detail { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
@@ -180,6 +186,22 @@
 </div>
 
 <div class="console-wrap">
+  <p class="panel-title">SNMP Traps &mdash; inbound notifications the device pushes to us (receiver on UDP/1162)</p>
+  <div class="adhoc">
+    <div class="row" style="align-items:center">
+      <button class="run" onclick="sendTestTrap()">Send v2c trap</button>
+      <button class="run" onclick="sendTestTrapV3(false)" style="background:var(--green);color:#052e16">Send v3 inform</button>
+      <button class="run" onclick="sendTestTrapV3(true)" style="background:var(--green);color:#052e16">Send v3 trap</button>
+      <button onclick="clearTraps()" style="font:inherit;font-size:12.5px;background:var(--panel2);
+              color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 14px;cursor:pointer">Clear</button>
+      <span style="color:var(--muted);font-size:12px">Received: <b id="trapCount">0</b></span>
+      <span style="color:var(--muted);font-size:12px;margin-left:auto">auto-refresh 4s</span>
+    </div>
+    <div id="trapOut" style="margin-top:10px"><div class="placeholder">No traps received yet. Click &ldquo;Send test trap&rdquo;.</div></div>
+  </div>
+</div>
+
+<div class="console-wrap">
   <p class="panel-title">Event console</p>
   <div class="console" id="console"></div>
 </div>
@@ -202,6 +224,18 @@ let devices = [], selected = null, tab = "overview", op = "GET", auto = null;
 const status = {};   // id -> {up:bool, uptime:string}
 
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+
+/* v3 USM security-level badge: colour encodes strength, tooltip explains it */
+function usmBadge(d) {
+  if (d.version !== "V3" || !d.securityLevel) return "";
+  const cls = d.securityLevel === "authPriv" ? "priv"
+            : d.securityLevel === "authNoPriv" ? "auth" : "noauth";
+  const proto = [d.authProtocol, d.privProtocol].filter(Boolean).join("/");
+  const tip = { noAuthNoPriv: "username only - no signing, no encryption",
+                authNoPriv:   "signed (auth) but sent in cleartext",
+                authPriv:     "signed AND encrypted" }[d.securityLevel] || "";
+  return `<span class="usm ${cls}" title="USM ${d.securityLevel}: ${tip}">${esc(d.securityLevel)}${proto ? " &middot; " + esc(proto) : ""}</span>`;
+}
 
 function logEv(level, msg) {
   const c = document.getElementById("console");
@@ -246,7 +280,7 @@ function renderList() {
       el.className = "device" + (selected && selected.id === d.id ? " active" : "");
       el.innerHTML =
         `<div class="dot ${dotCls}" id="dot-${esc(d.id)}"></div>
-         <div><div class="name">${esc(d.name)}<span class="pill ${vcls}">${esc(d.version)}</span></div>
+         <div><div class="name">${esc(d.name)}<span class="pill ${vcls}">${esc(d.version)}</span>${usmBadge(d)}</div>
          <div class="meta">${esc(d.host)}:${esc(d.port)} &middot; ${esc(d.vendor ?? "")} &middot; ${esc(d.location ?? "")}</div></div>`;
       el.onclick = () => select(d);
       list.appendChild(el);
@@ -299,8 +333,9 @@ function select(d) {
   document.getElementById("tabs").style.display = "flex";
   const st = status[d.id];
   document.getElementById("detailHead").innerHTML =
-    `<h2>${esc(d.name)}</h2>
+    `<h2>${esc(d.name)}${usmBadge(d)}</h2>
      <div class="sub">${esc(d.id)} &middot; ${esc(d.host)}:${esc(d.port)} &middot; SNMP ${esc(d.version)}
+     ${d.version === "V3" && d.securityLevel ? ' &middot; USM <b>' + esc(d.securityLevel) + '</b>' : ''}
      ${st && st.up ? ' &middot; <span class="up-t">reachable</span>' :
        st ? ' &middot; <span class="down-t">unreachable</span>' : ''}</div>`;
   pickTab(document.querySelector('.tabs button[data-tab="' + tab + '"]'));
@@ -512,7 +547,128 @@ async function adhocRun() {
   }
 }
 
+/* ---------------- SNMP traps (inbound notifications) ---------------- */
+
+const SNMP_TRAP_OID = "1.3.6.1.6.3.1.1.4.1.0"; // the varbind that identifies WHICH trap
+const TRAP_NAMES = {
+  "1.3.6.1.6.3.1.1.5.1": "coldStart", "1.3.6.1.6.3.1.1.5.2": "warmStart",
+  "1.3.6.1.6.3.1.1.5.3": "linkDown",  "1.3.6.1.6.3.1.1.5.4": "linkUp",
+  "1.3.6.1.6.3.1.1.5.5": "authenticationFailure"
+};
+
+/* ---- lightweight MIB-style decoding (curated, no MIB files) ---- */
+// Scalar OIDs (exact match, end in .0)
+const OID_NAMES = {
+  "1.3.6.1.2.1.1.1.0":"sysDescr", "1.3.6.1.2.1.1.2.0":"sysObjectID",
+  "1.3.6.1.2.1.1.3.0":"sysUpTime", "1.3.6.1.2.1.1.4.0":"sysContact",
+  "1.3.6.1.2.1.1.5.0":"sysName", "1.3.6.1.2.1.1.6.0":"sysLocation",
+  "1.3.6.1.6.3.1.1.4.1.0":"snmpTrapOID", "1.3.6.1.6.3.1.1.4.3.0":"snmpTrapEnterprise"
+};
+// Table COLUMNS (the returned OID = column + "." + rowIndex)
+const OID_COLUMNS = {
+  "1.3.6.1.2.1.2.2.1.1":"ifIndex", "1.3.6.1.2.1.2.2.1.2":"ifDescr",
+  "1.3.6.1.2.1.2.2.1.3":"ifType", "1.3.6.1.2.1.2.2.1.5":"ifSpeed",
+  "1.3.6.1.2.1.2.2.1.7":"ifAdminStatus", "1.3.6.1.2.1.2.2.1.8":"ifOperStatus",
+  "1.3.6.1.2.1.2.2.1.10":"ifInOctets", "1.3.6.1.2.1.2.2.1.16":"ifOutOctets"
+};
+// Enumerated values, keyed by column name
+const OID_ENUMS = {
+  ifOperStatus:  {1:"up",2:"down",3:"testing",4:"unknown",5:"dormant",6:"notPresent",7:"lowerLayerDown"},
+  ifAdminStatus: {1:"up",2:"down",3:"testing"},
+  ifType:        {1:"other",6:"ethernetCsmacd",24:"softwareLoopback",53:"propVirtual",131:"tunnel",161:"ieee8023adLag"}
+};
+
+function oidColumn(oid) {              // returns the column name if oid is under a known column
+  for (const col in OID_COLUMNS) if (oid === col || oid.startsWith(col + ".")) return { name: OID_COLUMNS[col], col };
+  return null;
+}
+function oidName(oid) {                // resolve an OID to a friendly name (or null)
+  if (OID_NAMES[oid]) return OID_NAMES[oid];
+  const c = oidColumn(oid);
+  if (c) return oid === c.col ? c.name : c.name + "." + oid.slice(c.col.length + 1);
+  return null;
+}
+function decodeValue(oid, value) {     // decode enums / the trap-OID value into meaning
+  if (oid === SNMP_TRAP_OID) return TRAP_NAMES[value] ? TRAP_NAMES[value] : value;
+  const c = oidColumn(oid);
+  if (c && OID_ENUMS[c.name] && OID_ENUMS[c.name][value] !== undefined)
+    return OID_ENUMS[c.name][value] + "(" + value + ")";
+  return value;
+}
+
+/* Version badge for a received trap: v3 coloured by USM level, v1/v2c plain. */
+function trapVerBadge(t) {
+  if (t.version === "v3") {
+    const cls = t.securityLevel === "authPriv" ? "priv"
+              : t.securityLevel === "authNoPriv" ? "auth" : "noauth";
+    return `<span class="usm ${cls}" title="SNMPv3 ${esc(t.securityLevel || "")}, user '${esc(t.user || "?")}'">&#128274; v3 ${esc(t.securityLevel || "")}</span>`;
+  }
+  return `<span class="usm" style="color:var(--muted)">${esc(t.version || "v2c")}</span>`;
+}
+
+async function loadTraps() {
+  try {
+    const traps = await api("/traps");
+    document.getElementById("trapCount").textContent = traps.length;
+    const out = document.getElementById("trapOut");
+    if (!traps.length) {
+      out.innerHTML = `<div class="placeholder">No traps received yet. Click &ldquo;Send test trap&rdquo;.</div>`;
+      return;
+    }
+    out.innerHTML = `<table>
+      <tr><th style="width:130px">Time</th><th>Source</th><th>Type / Version</th><th>Trap</th><th>Bindings</th></tr>
+      ${traps.map(t => {
+        const time = new Date(t.receivedAt).toLocaleTimeString();
+        const trapVb = t.bindings.find(b => b.oid === SNMP_TRAP_OID);
+        const trapName = trapVb ? (TRAP_NAMES[trapVb.value] || trapVb.value) : "-";
+        const binds = t.bindings.map(b => {
+          const nm = oidName(b.oid);
+          const label = nm
+            ? `<b>${esc(nm)}</b> <span style="color:var(--gray);font-size:10px">${esc(b.oid)}</span>`
+            : `<span class="oid">${esc(b.oid)}</span>`;
+          return `<div style="margin:1px 0">${label} = ${esc(decodeValue(b.oid, b.value))}</div>`;
+        }).join("");
+        return `<tr><td>${time}</td><td class="oid">${esc(t.source)}</td>
+          <td>${esc(t.type)} ${trapVerBadge(t)}</td><td class="up-t">${esc(trapName)}</td><td>${binds}</td></tr>`;
+      }).join("")}</table>`;
+  } catch (e) { /* receiver may still be warming up; leave last render in place */ }
+}
+
+async function sendTestTrap() {
+  try {
+    const r = await api("/traps/test", { method: "POST" });
+    logEv("ok", `Test trap sent to ${esc(r.to)} - ${esc(r.trap)}`);
+    setTimeout(loadTraps, 300); // give the listener a moment to record it
+  } catch (e) {
+    logEv("err", `Test trap failed: ${esc(e.message)}`);
+  }
+}
+
+async function sendTestTrapV3(asTrap) {
+  const path = asTrap ? "/traps/test-v3-trap" : "/traps/test-v3";
+  try {
+    const r = await api(path, { method: "POST" });
+    const ack = asTrap ? "" : ` (acked: ${r.acked})`;
+    logEv("ok", `v3 ${esc(r.level)} ${esc(r.kind).toUpperCase()} sent as '${esc(r.user)}' - ${esc(r.trap)}${ack}`);
+    setTimeout(loadTraps, 300);
+  } catch (e) {
+    logEv("err", `v3 test ${asTrap ? "trap" : "inform"} failed: ${esc(e.message)}`);
+  }
+}
+
+async function clearTraps() {
+  try {
+    const r = await api("/traps", { method: "DELETE" });
+    logEv("info", `Cleared ${r.cleared} traps`);
+    loadTraps();
+  } catch (e) {
+    logEv("err", `Clear failed: ${esc(e.message)}`);
+  }
+}
+
 loadDevices();
+loadTraps();
+setInterval(loadTraps, 4000);
 </script>
 </body>
 </html>

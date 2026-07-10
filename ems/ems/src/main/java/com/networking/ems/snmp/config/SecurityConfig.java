@@ -24,7 +24,7 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/", "/index.html", "/favicon.ico").permitAll()
-                        .requestMatchers("/device/**", "/devices/**").permitAll()
+                        .requestMatchers("/device/**", "/devices/**", "/traps/**").permitAll()
                         .anyRequest().authenticated());
         return http.build();
     }
