@@ -54,6 +54,12 @@
 			<artifactId>snmp4j</artifactId>
 			<version>2.8.15</version>
 		</dependency>
+		<!-- SSH transport for NETCONF (port 830); the client is built on top of this -->
+		<dependency>
+			<groupId>org.apache.sshd</groupId>
+			<artifactId>sshd-core</artifactId>
+			<version>2.13.2</version>
+		</dependency>
 	</dependencies>
 
 	<build>

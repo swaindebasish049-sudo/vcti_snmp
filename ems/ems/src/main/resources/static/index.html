@@ -202,6 +202,72 @@
 </div>
 
 <div class="console-wrap">
+  <p class="panel-title">NETCONF &mdash; transactional configuration over SSH/XML (RFC 6241), hits <code>/netconf/**</code></p>
+  <div class="adhoc">
+    <div class="row">
+      <select id="ncDevice" style="min-width:180px"></select>
+      <select id="ncPresets" onchange="ncApplyPreset()" style="min-width:220px">
+        <option value="">config presets...</option>
+        <option value="add-lo">Add loopback interface (loopback2)</option>
+        <option value="describe-lo0">Set description on loopback0</option>
+        <option value="delete-lo1">Delete loopback1 (nc:operation=delete)</option>
+      </select>
+    </div>
+    <div class="seg" id="ncOpSeg">
+      <button data-op="GET-CONFIG" class="on" onclick="ncPickOp(this)">GET-CONFIG</button>
+      <button data-op="GET" onclick="ncPickOp(this)">GET</button>
+      <button data-op="EDIT-CONFIG" onclick="ncPickOp(this)">EDIT-CONFIG</button>
+      <button data-op="EDIT-CONFIG-SAFE" onclick="ncPickOp(this)">EDIT-CONFIG (SAFE)</button>
+      <button data-op="LOCK" onclick="ncPickOp(this)">LOCK</button>
+      <button data-op="UNLOCK" onclick="ncPickOp(this)">UNLOCK</button>
+      <button data-op="VALIDATE" onclick="ncPickOp(this)">VALIDATE</button>
+      <button data-op="COMMIT" onclick="ncPickOp(this)">COMMIT</button>
+      <button data-op="DISCARD-CHANGES" onclick="ncPickOp(this)">DISCARD-CHANGES</button>
+      <button data-op="COPY-CONFIG" onclick="ncPickOp(this)">COPY-CONFIG</button>
+      <button data-op="DELETE-CONFIG" onclick="ncPickOp(this)">DELETE-CONFIG</button>
+    </div>
+    <div class="row" id="ncDatastoreRow">
+      <label style="font-size:12px;color:var(--muted)">datastore
+        <select id="ncDatastore">
+          <option value="running">running</option>
+          <option value="candidate" selected>candidate</option>
+          <option value="startup">startup</option>
+        </select>
+      </label>
+    </div>
+    <div class="row" id="ncCopyRow" style="display:none">
+      <label style="font-size:12px;color:var(--muted)">source
+        <select id="ncSource">
+          <option value="running">running</option>
+          <option value="candidate">candidate</option>
+          <option value="startup">startup</option>
+        </select>
+      </label>
+      <label style="font-size:12px;color:var(--muted)">target
+        <select id="ncTarget">
+          <option value="running">running</option>
+          <option value="candidate" selected>candidate</option>
+          <option value="startup">startup</option>
+        </select>
+      </label>
+    </div>
+    <div class="row" id="ncConfigRow" style="display:none">
+      <textarea id="ncConfigXml" placeholder="&lt;config&gt; fragment, e.g. &lt;interfaces xmlns=...&gt;...&lt;/interfaces&gt;"
+        style="width:100%;min-height:90px;font-family:ui-monospace,Consolas,monospace;font-size:12px;
+               padding:8px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text)"></textarea>
+    </div>
+    <div class="row">
+      <label id="ncCommitWrap" style="font-size:12px;color:var(--muted);display:none">
+        <input type="checkbox" id="ncCommit" checked> commit immediately
+      </label>
+      <button class="run" onclick="ncRun()">Run</button>
+    </div>
+    <div class="op-hint" id="ncHint"></div>
+    <div id="ncOut" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<div class="console-wrap">
   <p class="panel-title">Event console</p>
   <div class="console" id="console"></div>
 </div>
@@ -666,8 +732,148 @@ async function clearTraps() {
   }
 }
 
+/* ---------------- NETCONF (transactional config over SSH/XML) ---------------- */
+
+let ncOp = "GET-CONFIG";
+let ncDevices = [];
+
+const NC_HINTS = {
+  "GET-CONFIG": "Read a datastore's config (running / candidate / startup).",
+  "GET": "Read config AND operational state (no datastore choice).",
+  "EDIT-CONFIG": "Apply the XML below to the CANDIDATE datastore; optionally commit to running.",
+  "EDIT-CONFIG-SAFE": "Best practice, one session: lock -> edit-config -> validate -> commit (or discard if invalid) -> unlock. Shows every step's reply.",
+  "LOCK": "Reserve a datastore so no one else can edit it while you hold the lock.",
+  "UNLOCK": "Release a lock taken with LOCK.",
+  "VALIDATE": "Check a datastore's contents are valid, without applying or committing anything.",
+  "COMMIT": "Apply the candidate datastore to running (standalone, outside edit-config).",
+  "DISCARD-CHANGES": "Throw away un-committed candidate edits, reverting it to match running.",
+  "COPY-CONFIG": "Replace TARGET datastore's entire contents with SOURCE's.",
+  "DELETE-CONFIG": "Wipe a datastore's contents (not allowed on running)."
+};
+
+const NC_PRESETS = {
+  "add-lo": '<interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">\n'
+    + '  <interface>\n    <name>loopback2</name>\n'
+    + '    <type xmlns:ianaift="urn:ietf:params:xml:ns:yang:iana-if-type">ianaift:softwareLoopback</type>\n'
+    + '    <enabled>true</enabled>\n    <description>added from EMS UI</description>\n  </interface>\n</interfaces>',
+  "describe-lo0": '<interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">\n'
+    + '  <interface>\n    <name>loopback0</name>\n    <description>updated via EMS UI</description>\n  </interface>\n</interfaces>',
+  "delete-lo1": '<interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">\n'
+    + '  <interface xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" nc:operation="delete">\n'
+    + '    <name>loopback1</name>\n  </interface>\n</interfaces>'
+};
+
+/* fetch helper for XML/plain-text NETCONF replies (the JSON api() helper doesn't fit here) */
+async function apiText(path, opts) {
+  const res = await fetch(path, opts);
+  const body = await res.text();
+  if (!res.ok) throw new Error(body || res.statusText);
+  return body;
+}
+
+/* tiny regex-based XML indenter, just for readable display */
+function formatXml(xml) {
+  if (!xml) return "";
+  const lines = xml.replace(/></g, ">\n<").split("\n");
+  let pad = 0;
+  const out = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const isClosing = /^<\//.test(line);
+    const isSelfClosing = /\/>\s*$/.test(line) || /^<\?xml/.test(line);
+    const isCombined = /^<([\w:.-]+)[^>]*>.*<\/\1>$/.test(line);
+    if (isClosing) pad = Math.max(pad - 1, 0);
+    out.push("  ".repeat(pad) + line);
+    if (!isClosing && !isSelfClosing && !isCombined) pad++;
+  }
+  return out.join("\n");
+}
+
+async function loadNetconfDevices() {
+  try {
+    const r = await api("/netconf/devices");
+    ncDevices = r.devices || [];
+    document.getElementById("ncDevice").innerHTML = ncDevices
+      .map(d => `<option value="${esc(d.id)}">${esc(d.name)} (${esc(d.host)}:${esc(d.port)})</option>`).join("");
+  } catch (e) {
+    logEv("err", `NETCONF device list failed: ${esc(e.message)}`);
+  }
+}
+
+function ncPickOp(btn) {
+  ncOp = btn.dataset.op;
+  document.querySelectorAll("#ncOpSeg button").forEach(b => b.classList.toggle("on", b === btn));
+  document.getElementById("ncDatastoreRow").style.display =
+    ["GET-CONFIG", "LOCK", "UNLOCK", "VALIDATE", "DELETE-CONFIG"].includes(ncOp) ? "flex" : "none";
+  document.getElementById("ncCopyRow").style.display = ncOp === "COPY-CONFIG" ? "flex" : "none";
+  document.getElementById("ncConfigRow").style.display =
+    (ncOp === "EDIT-CONFIG" || ncOp === "EDIT-CONFIG-SAFE") ? "block" : "none";
+  document.getElementById("ncCommitWrap").style.display = ncOp === "EDIT-CONFIG" ? "inline-block" : "none";
+  document.getElementById("ncHint").textContent = NC_HINTS[ncOp] || "";
+}
+
+function ncApplyPreset() {
+  const key = document.getElementById("ncPresets").value;
+  if (!key) return;
+  document.getElementById("ncConfigXml").value = NC_PRESETS[key];
+  if (ncOp !== "EDIT-CONFIG" && ncOp !== "EDIT-CONFIG-SAFE") {
+    ncPickOp(document.querySelector('#ncOpSeg button[data-op="EDIT-CONFIG"]'));
+  }
+}
+
+async function ncRun() {
+  const id = document.getElementById("ncDevice").value;
+  if (!id) { logEv("err", "NETCONF: no device selected"); return; }
+  const ds = document.getElementById("ncDatastore").value;
+  const out = document.getElementById("ncOut");
+  const t0 = performance.now();
+  try {
+    let resp;
+    if (ncOp === "GET-CONFIG") {
+      resp = await apiText(`/netconf/${id}/get-config?datastore=${ds}`);
+    } else if (ncOp === "GET") {
+      resp = await apiText(`/netconf/${id}/get`);
+    } else if (ncOp === "EDIT-CONFIG") {
+      const commit = document.getElementById("ncCommit").checked;
+      const body = document.getElementById("ncConfigXml").value;
+      resp = await apiText(`/netconf/${id}/edit-config?commit=${commit}`,
+        { method: "POST", headers: { "Content-Type": "application/xml" }, body });
+    } else if (ncOp === "EDIT-CONFIG-SAFE") {
+      const body = document.getElementById("ncConfigXml").value;
+      resp = await apiText(`/netconf/${id}/edit-config-safe`,
+        { method: "POST", headers: { "Content-Type": "application/xml" }, body });
+    } else if (ncOp === "LOCK") {
+      resp = await apiText(`/netconf/${id}/lock?datastore=${ds}`, { method: "POST" });
+    } else if (ncOp === "UNLOCK") {
+      resp = await apiText(`/netconf/${id}/unlock?datastore=${ds}`, { method: "POST" });
+    } else if (ncOp === "VALIDATE") {
+      resp = await apiText(`/netconf/${id}/validate?datastore=${ds}`, { method: "POST" });
+    } else if (ncOp === "COMMIT") {
+      resp = await apiText(`/netconf/${id}/commit`, { method: "POST" });
+    } else if (ncOp === "DISCARD-CHANGES") {
+      resp = await apiText(`/netconf/${id}/discard-changes`, { method: "POST" });
+    } else if (ncOp === "COPY-CONFIG") {
+      const source = document.getElementById("ncSource").value;
+      const target = document.getElementById("ncTarget").value;
+      resp = await apiText(`/netconf/${id}/copy-config?source=${source}&target=${target}`, { method: "POST" });
+    } else if (ncOp === "DELETE-CONFIG") {
+      resp = await apiText(`/netconf/${id}/delete-config?target=${ds}`, { method: "POST" });
+    }
+    out.innerHTML = `<pre style="white-space:pre-wrap;word-break:break-word;background:#0b1120;
+      border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11.5px;
+      font-family:ui-monospace,Consolas,monospace;max-height:360px;overflow:auto">${esc(formatXml(resp))}</pre>`;
+    logEv("ok", `NETCONF ${ncOp} on ${esc(id)} ok (${Math.round(performance.now() - t0)} ms)`);
+  } catch (e) {
+    out.innerHTML = `<div class="placeholder">${esc(e.message)}</div>`;
+    logEv("err", `NETCONF ${ncOp} on ${esc(id)} failed - ${esc(e.message)}`);
+  }
+}
+
 loadDevices();
 loadTraps();
+loadNetconfDevices();
+ncPickOp(document.querySelector('#ncOpSeg button[data-op="GET-CONFIG"]'));
 setInterval(loadTraps, 4000);
 </script>
 </body>
